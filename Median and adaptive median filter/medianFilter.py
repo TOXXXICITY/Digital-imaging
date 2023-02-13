@@ -1,86 +1,101 @@
 import cv2
+import numpy as np
+import statistics
 from matplotlib import pyplot as plt
-import sys
-from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QPushButton, QCheckBox, QComboBox
+import sys, os
+from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QPushButton, QComboBox
+from PyQt5 import QtGui, QtCore
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap
 
 
-# Среднеарифметический и сигма фильтры.
-# Среднеарифметический фильтр
-def arithmetic_mean_filter(img2, n, m):
+# Обычный и адаптивный медианный фильтры
+# медианный фильтр
+def med_filter(img2, n, m):
     # создаём копию изображения
     img = img2.copy()
-    text = "Среднеарифметический фильтр " + str(n) + " x " + str(m)
-    print(text)
-    # вводим переменную средней яркости
-    avrg_bright = int(0)
+    text = "Медианный фильтр " + str(n) + " x " + str(m)
+    # вводим массив значений для медианы
+    med = np.ndarray(n*m)
 
-    # итерация по поксилям изображения
+    # итерация по пикселям изображения
     for i in range(1, img.shape[0] - m):
         for j in range(1, img.shape[1] - n):
-            avrg_bright = 0
-
-            # итерация по маске отдельного пикселя
+            k = 0
+            # итерация по окрестности отдельного пикселя
             for n_i in range(int(-(n-1)/2), int((n-1)/2 + 1)):
                 for m_i in range(int(-(m-1)/2), int((m-1)/2 + 1)):
-                    avrg_bright += img[i - n_i][j - m_i]
-
-            # присваиваем пикселю, среднее значение яркости маски
-            img[i][j] = avrg_bright/(m*n)
-    histogram(img, text)
+                    med[k] = img[i - n_i][j - m_i]
+                    k += 1
+            # присваиваем пикселю, медиану отсортированного массива элементов окрестности
+            img[i][j] = statistics.median(sorted(med))
+    hist_calc(img, text)
     return img
 
 
-# сигма фильтр
-def sigma_filter(img2, n, m):
+# Адаптивный усредняющий фильтр
+def adaptive_filter(image, n, m):
     # создаём копию изображения
-    img = img2.copy()
-    text = "Сигма фильтр " + str(n) + " x " + str(m)
-    avrg_bright = int(0)
-    # Заданное пользовательское значение дисперсии шума
-    De = 30
-    # Заданное пороговое значение
-    brt_treshhold = De * 1
-    # итерация по поксилям изображения
-    for i in range(1, img.shape[0] - m):
-        for j in range(1, img.shape[1] - n):
-            avrg_bright = 0
-            count = 0
-            # вычисление средней яркости
+    img = image.copy()
+    text = "Адаптивный медианный фильтр " + str(n) + " x " + str(m)
+    # вводим массив значений для медианы
+    Smax = 15
+    # итерация по пикселям изображения
+    def loop_adaptive_med(m,n,image, Smax):
+            med = np.ndarray(n * m)
+            k = 0
+            # итерация по окрестности отдельного пикселя
             for n_i in range(int(-(n - 1) / 2), int((n - 1) / 2 + 1)):
                 for m_i in range(int(-(m - 1) / 2), int((m - 1) / 2 + 1)):
-                    if int(img[i - n_i][j - m_i]) - int(img[i][j]) < brt_treshhold:
-                        count += 1
-                        avrg_bright += img[i - n_i][j - m_i]
-            # значение средней яркости для окрестности
-            # print(count)
-            avrg_bright /= count
-            img[i][j] = avrg_bright
+                    med[k] = image[i - n_i][j - m_i]
+                    k += 1
+            # медиана области
+            med_in_arr = statistics.median(sorted(med))
+            # минимум области
+            min_in_arr = min(med)
+            # максимум области
+            max_in_arr = max(med)
 
-    histogram(img, text)
+            # основное условие
+            if min_in_arr < med_in_arr < max_in_arr:
+                if min_in_arr < image[i][j] < max_in_arr:
+                    return image[i][j]
+                else:
+                    return statistics.median(sorted(med))
+            else:
+                # увеличение окрестности
+                m+=2
+                n+=2
+                if m <= Smax:
+                    return loop_adaptive_med(m, n, image, Smax)
+                else:
+                    return statistics.median(sorted(med))
+
+    for i in range(int(Smax/2), img.shape[0] - int(Smax/2)):
+        for j in range(int(Smax/2), img.shape[1] - int(Smax/2)):
+            img[i][j] = loop_adaptive_med(m, n, image, Smax)
+    hist_calc(img, text)
     return img
 
 
-# Создание гистограмм
-def histogram(source_img, text):
+# Подсчёт и отображение гистограмм
+def hist_calc(source_img, text):
     # Создание гистограмм
     plt.hist(source_img.ravel(), bins = 256)
     # Вывод гистограмм
     plt.title(text)
     plt.show()
 
-
-# класс создания интерфейса
+# класс создания окна интерфейса
 class ImageLabel(QLabel):
     def __init__(self):
         super().__init__()
 
         self.setAlignment(Qt.AlignCenter)
-        self.setText('\n\n Кидайте сюда картинку \n\n')
+        self.setText('\n\n Картинку сюда \n\n')
         self.setStyleSheet('''
             QLabel{
-                border: 2px dashed #777
+                border: 4px dashed #999
             }
         ''')
 
@@ -92,32 +107,28 @@ class ImageLabel(QLabel):
 class AppDemo(QWidget):
     def __init__(self):
         super().__init__()
-        # Создание окна
-        self.resize(400, 400)
+        # создание окна
+        self.resize(500, 500)
         self.setAcceptDrops(True)
         main_layout = QVBoxLayout()
-        # Создание кнопки
-        self.button = QPushButton("Обработать картинку")
+        # кнопка
+        self.button = QPushButton("Рассчитать")
+        main_layout.addWidget(self.button)
 
+        self.label = QLabel("ОБЫЧНЫЙ И АДАПТИВНЫЙ МЕДИАННЫЙ ФИЛЬТРЫ")
+        main_layout.addWidget(self.label)
 
         self.filter_type = QComboBox()
-        # Выбор фильтра
-        self.filter_type.addItem('Сигма фильтр',
-                                 ['Размер маски : 3 x 3',
-                                  'Размер маски : 5 x 5',
-                                  'Размер маски : 7 x 7'])
-        self.filter_type.addItem('Среднеарифметический фильтр',
-                                 ['Размер маски : 3 x 3',
-                                  'Размер маски : 5 x 5',
-                                  'Размер маски : 7 x 7'])
+        # выбор фильтра
+        self.filter_type.addItem('Адаптивный Медианный фильтр', ['3 x 3', '5 x 5', '7 x 7', '9 x 9'])
+        self.filter_type.addItem('Медианный фильтр', ['3 x 3', '5 x 5', '7 x 7', '9 x 9'])
         main_layout.addWidget(self.filter_type)
         self.filter_size = QComboBox()
 
-        # Действие при нажатии на кнопку
+        # действие при нажатии на кнопку
         self.button.clicked.connect(lambda: self.calculate(self.filter_type.currentIndex(), self.filter_size.currentIndex()))
 
         main_layout.addWidget(self.filter_size)
-        main_layout.addWidget(self.button)
         self.filter_type.currentIndexChanged.connect(self.update_filters)
         self.update_filters(self.filter_type.currentIndex())
         self.photoViewer = ImageLabel()
@@ -125,14 +136,14 @@ class AppDemo(QWidget):
 
         self.setLayout(main_layout)
 
-    # Обновление выпадающего списка
+    # Обновление значений из выпадающих списков
     def update_filters(self, index):
         self.filter_size.clear()
-        filters = self.filter_type.itemData(index)
-        if filters:
-            self.filter_size.addItems(filters)
+        size = self.filter_type.itemData(index)
+        if size:
+            self.filter_size.addItems(size)
 
-    # Drag and Drop элемент
+    # Функции для поодержки Drag and Drop
     def dragEnterEvent(self, event):
         if event.mimeData().hasImage:
             event.accept()
@@ -169,20 +180,23 @@ class AppDemo(QWidget):
             n = m = 5
         if nm == 2:
             n = m = 7
-        src_img = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
+        if nm == 3:
+            n = m = 9
+        img2 = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
         # обработка адаптивным фильтром, в случае выбора в выпадающем списке
         if f_type == 0:
-            post_img = sigma_filter(src_img, n, m)
+            img2 = adaptive_filter(img2, n, m)
         # обработка среднеарифметическим фильтром, в случае выбора в выпадающем списке
         if f_type == 1:
-            post_img = arithmetic_mean_filter(src_img, n, m)
-        cv2.imwrite("/programs/images", post_img)
-        self.set_image("/programs/images/post_processed.png")
+            img2 = med_filter(img2, n, m)
+        # self.hist_calc(img2)
+        # img2 = cv2.resize(img2, (1200, 1200))
+        cv2.imwrite("$yourPath$", img2)
+        self.set_image("$yourPath$/img2.png")
 
 
 # Запуск основной части программы
 app = QApplication(sys.argv)
 demo = AppDemo()
-# Показ интерфейса пользователю
 demo.show()
 sys.exit(app.exec_())
